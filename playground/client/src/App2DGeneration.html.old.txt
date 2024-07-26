@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Preview Generation - Debug Version</title>
+    <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+        }
+        .container {
+            max-width: 800px;
+            width: 100%;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        input[type="text"], button {
+            margin: 5px;
+            padding: 5px;
+        }
+        canvas {
+            border: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // MondrianLayout class
+        class MondrianLayout {
+            constructor(width, height) {
+                this.width = width;
+                this.height = height;
+                this.slots = [{x: 0, y: 0, w: width, h: height}];
+            }
+
+            place(size) {
+                for (let i = 0; i < this.slots.length; i++) {
+                    const slot = this.slots[i];
+                    if (slot.w >= size && slot.h >= size) {
+                        const newSlot = {x: slot.x, y: slot.y, r: size};
+                        this.slots.splice(i, 1);
+                        if (slot.w > size) {
+                            this.slots.push({x: slot.x + size, y: slot.y, w: slot.w - size, h: slot.h});
+                        }
+                        if (slot.h > size) {
+                            this.slots.push({x: slot.x, y: slot.y + size, w: size, h: slot.h - size});
+                        }
+                        return {position: {x: newSlot.x, y: newSlot.y}, r: newSlot.r};
+                    }
+                }
+                console.warn(`Failed to place square of size ${size}`);
+                return null;
+            }
+
+            getSize() {
+                return {width: this.width, height: this.height};
+            }
+        }
+
+        // CanvasRenderer component
+        const CanvasRenderer = ({ data, style, color = 'orange' }) => {
+            const canvasRef = React.useRef(null);
+
+            React.useEffect(() => {
+                if (!data || !canvasRef.current) return;
+                renderImage(data);
+            }, [data]);
+
+            function renderImage(data) {
+                if (!canvasRef.current || data.length === 0) return;
+
+                console.log("Input data:", data);
+
+                let blockWeight = data.reduce((sum, size) => sum + size * size, 0);
+                const blockWidth = Math.ceil(Math.sqrt(blockWeight));
+                console.log("Block width:", blockWidth);
+
+                const mondrian = new MondrianLayout(blockWidth, blockWidth);
+                const mondrianSlots = data.map(size => mondrian.place(size)).filter(slot => slot !== null);
+                console.log("Mondrian slots:", mondrianSlots);
+
+                const canvas = canvasRef.current;
+                const ctx = canvas.getContext('2d');
+                if (!ctx) return;
+
+                const clientRect = canvas.getBoundingClientRect();
+                const padd = 0.5;
+                const mondrianSize = mondrian.getSize();
+                console.log("Mondrian size:", mondrianSize);
+                
+                const scaleX = clientRect.width / mondrianSize.width;
+                const scaleY = clientRect.height / mondrianSize.height;
+                const scale = Math.min(scaleX, scaleY);
+                console.log("Scale:", scale);
+
+                const offsetX = (clientRect.width - mondrianSize.width * scale) / 2;
+                const offsetY = (clientRect.height - mondrianSize.height * scale) / 2;
+                console.log("Offset:", {x: offsetX, y: offsetY});
+
+                canvas.width = clientRect.width;
+                canvas.height = clientRect.height;
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                mondrianSlots.forEach((slot, index) => {
+                    const x = slot.position.x * scale + offsetX;
+                    const y = slot.position.y * scale + offsetY;
+                    const size = slot.r * scale;
+                    console.log(`Drawing square ${index + 1}:`, {x, y, size});
+                    ctx.fillStyle = color;
+                    ctx.fillRect(x, y, size - padd, size - padd);
+                    
+                    // Draw square number for debugging
+                    ctx.fillStyle = 'white';
+                    ctx.font = '10px Arial';
+                    ctx.fillText(index + 1, x + 2, y + 10);
+                });
+
+                // Debug: Draw total number of squares
+                ctx.fillStyle = 'black';
+                ctx.font = '14px Arial';
+                ctx.fillText(`Total squares: ${mondrianSlots.length} / ${data.length}`, 10, 20);
+            }
+
+            return <canvas ref={canvasRef} style={style} />;
+        };
+
+        // Main App component
+        const App = () => {
+            const [blockHeight, setBlockHeight] = React.useState('');
+            const [txArray, setTxArray] = React.useState([]);
+
+            const anatomyClassification = (amount) => {
+                const thresholds = [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000, 1000000];
+                for (let idx = 0; idx < thresholds.length; idx++) {
+                    if (amount <= thresholds[idx]) {
+                        return idx + 1;
+                    }
+                }
+                return 10;
+            };
+
+            const fetchAndSaveTransactions = async () => {
+                try {
+                    const response = await axios.get(`https://blockchain.info/block-height/${blockHeight}?format=json`);
+                    const blockData = response.data;
+                    const blocks = blockData.blocks || [];
+                    if (blocks.length > 0) {
+                        const transactions = blocks[0].tx || [];
+                        const txValues = transactions.map(tx => 
+                            tx.out.reduce((sum, output) => sum + (output.value || 0), 0) / 100000000
+                        );
+                        const content = txValues.join('\n');
+                        const blob = new Blob([content], { type: 'text/plain' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `${blockHeight}_tx_values.txt`;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                        URL.revokeObjectURL(url);
+                        alert('Transaction values have been saved to a file.');
+                    } else {
+                        console.error('No blocks found for the specified block height.');
+                    }
+                } catch (error) {
+                    console.error('Error fetching block data:', error);
+                }
+            };
+
+            const loadAndDrawTransactions = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const content = e.target.result;
+                        const txValues = content.split('\n').filter(line => line.trim() !== '').map(Number);
+                        console.log("Raw transaction values:", txValues);
+                        const classifiedTypes = txValues.map(anatomyClassification);
+                        console.log("Classified types:", classifiedTypes);
+                        setTxArray(classifiedTypes);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            return (
+                <div className="container">
+                    <h2>2D PREVIEW GENERATION - Debug Version</h2>
+                    <p>
+                        Simple implementation of <a href='https://bitfeed.live/' target='_blank' rel='noopener noreferrer'>Bitfeed's</a> visualization mode for transactions.
+                    </p>
+                    <div className="card">
+                        <h3>Enter Block Height</h3>
+                        <div>
+                            <input
+                                type="text"
+                                value={blockHeight}
+                                onChange={(event) => setBlockHeight(event.target.value)}
+                                style={{ width: '300px' }}
+                                placeholder="Enter block height"
+                            />
+                            <button onClick={fetchAndSaveTransactions}>Fetch and Save</button>
+                        </div>
+                    </div>
+                    <div className="card">
+                        <h3>Load Transaction Data</h3>
+                        <input type="file" accept=".txt" onChange={loadAndDrawTransactions} />
+                    </div>
+                    <div className="card">
+                        <h3>Canvas Renderer</h3>
+                        <CanvasRenderer color='orange' data={txArray} style={{ width: '250px', height: '250px', maxWidth: '250px', maxHeight: '250px' }} />
+                    </div>
+                    <div>
+                        <h3>Debug Info</h3>
+                        <p>Number of transactions: {txArray.length}</p>
+                        <p>Transaction sizes: {txArray.join(', ')}</p>
+                    </div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D Preview Generation</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/17.0.2/umd/react.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/17.0.2/umd/react-dom.development.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/6.26.0/babel.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+        }
+        .card {
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        input, button {
+            margin: 5px;
+            padding: 5px;
+        }
+        #renderArea {
+            width: 500px;
+            height: 500px;
+            border: 1px solid #000;
+            position: relative;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        // MondrianLayout utility
+        class MondrianLayout {
+            constructor(width, height) {
+                this.width = width;
+                this.height = height;
+                this.layout = new Array(height).fill(null).map(() => new Array(width).fill(0));
+            }
+
+            getSize() {
+                return { width: this.width, height: this.height };
+            }
+
+            place(size) {
+                for (let y = 0; y < this.height; y++) {
+                    for (let x = 0; x < this.width; x++) {
+                        if (this.canPlace(x, y, size)) {
+                            this.fillArea(x, y, size);
+                            return { position: { x, y }, r: size };
+                        }
+                    }
+                }
+                return null;
+            }
+
+            canPlace(x, y, size) {
+                if (x + size > this.width || y + size > this.height) return false;
+                for (let dy = 0; dy < size; dy++) {
+                    for (let dx = 0; dx < size; dx++) {
+                        if (this.layout[y + dy][x + dx] !== 0) return false;
+                    }
+                }
+                return true;
+            }
+
+            fillArea(x, y, size) {
+                for (let dy = 0; dy < size; dy++) {
+                    for (let dx = 0; dx < size; dx++) {
+                        this.layout[y + dy][x + dx] = 1;
+                    }
+                }
+            }
+        }
+
+        // Page2DGeneration component
+        const Page2DGeneration = () => {
+            const [txArray, setTxArray] = React.useState([]);
+            const renderAreaRef = React.useRef(null);
+
+            const anatomyClassification = (amount) => {
+                const thresholds = [0.01, 0.1, 1, 10, 100, 1000, 10000, 100000, 1000000];
+                for (let idx = 0; idx < thresholds.length; idx++) {
+                    if (amount <= thresholds[idx]) {
+                        return idx + 1;
+                    }
+                }
+                return 10;
+            };
+
+            const loadAndDrawTransactions = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const content = e.target.result;
+                        const txValues = content.split('\n').map(Number);
+                        const classifiedTypes = txValues.map(anatomyClassification);
+                        setTxArray(classifiedTypes);
+                    };
+                    reader.readAsText(file);
+                }
+            };
+
+            React.useEffect(() => {
+                if (txArray.length > 0 && renderAreaRef.current) {
+                    renderSquares();
+                }
+            }, [txArray]);
+
+            const renderSquares = () => {
+                const renderArea = renderAreaRef.current;
+                renderArea.innerHTML = ''; // Clear previous rendering
+
+                let blockWeight = txArray.reduce((sum, size) => sum + size * size, 0);
+                const blockWidth = Math.ceil(Math.sqrt(blockWeight));
+                const mondrian = new MondrianLayout(blockWidth, blockWidth);
+                const mondrianSlots = [];
+
+                for (const size of txArray) {
+                    const slot = mondrian.place(size);
+                    if (slot) mondrianSlots.push(slot);
+                }
+
+                const mondrianSize = mondrian.getSize();
+                const padd = 0.5; // margin between squares
+                const scaleX = renderArea.clientWidth / (mondrianSize.width - padd);
+                const scaleY = renderArea.clientHeight / (mondrianSize.height - padd);
+                const scale = Math.min(scaleX, scaleY);
+
+                const offsetX = (renderArea.clientWidth - (mondrianSize.width - padd) * scale) / 2;
+                const offsetY = (renderArea.clientHeight - (mondrianSize.height - padd) * scale) / 2;
+
+                mondrianSlots.forEach((slot, index) => {
+                    const div = document.createElement('div');
+                    div.style.position = 'absolute';
+                    div.style.left = `${offsetX + slot.position.x * scale}px`;
+                    div.style.top = `${offsetY + slot.position.y * scale}px`;
+                    div.style.width = `${(slot.r - padd) * scale}px`;
+                    div.style.height = `${(slot.r - padd) * scale}px`;
+                    div.style.backgroundColor = 'orange';
+                    div.style.cursor = 'pointer';
+
+                    div.onmouseover = () => { 
+                        div.style.backgroundColor = 'red';  
+                        div.textContent = `Parcel ${index}`; 
+                    };
+                    div.onmouseout = () => { 
+                        div.style.backgroundColor = 'orange'; 
+                        div.textContent = '';
+                    };
+                    div.onclick = () => { 
+                        console.log(`Clicked on parcel ${index}`);
+                    };
+
+                    renderArea.appendChild(div);
+                });
+            };
+
+            return (
+                <div>
+                    <h2>2D PREVIEW GENERATION</h2>
+                    <div className="card">
+                        <h3>Load Transaction Data</h3>
+                        <input type="file" accept=".txt" onChange={loadAndDrawTransactions} />
+                    </div>
+                    <div id="renderArea" ref={renderAreaRef}></div>
+                </div>
+            );
+        };
+
+        ReactDOM.render(<Page2DGeneration />, document.getElementById('root'));
+    </script>
+</body>
+</html>
